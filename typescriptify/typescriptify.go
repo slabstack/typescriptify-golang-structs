@@ -37,9 +37,10 @@ const (
 
 // TypeOptions overrides options set by `ts_*` tags.
 type TypeOptions struct {
-	TSType      string
-	TSDoc       string
-	TSTransform string
+	TSType       string
+	TSDoc        string
+	TSTransform  string
+	NullableType interface{}
 }
 
 // StructType stores settings for transforming one Golang struct.
@@ -510,6 +511,9 @@ func (t *TypeScriptify) getFieldOptions(structType reflect.Type, field reflect.S
 		if o.TSType != "" {
 			opts.TSType = o.TSType
 		}
+		if o.NullableType != nil {
+			opts.NullableType = o.NullableType
+		}
 	}
 
 	return opts
@@ -594,6 +598,17 @@ func (t *TypeScriptify) convertType(depth int, typeOf reflect.Type, customCode m
 		} else if _, isEnum := t.enums[field.Type]; isEnum {
 			t.logf(depth, "- enum field %s.%s", typeOf.Name(), field.Name)
 			builder.AddEnumField(jsonFieldName, field)
+		} else if fldOpts.NullableType != nil {
+			nt := reflect.TypeOf(fldOpts.NullableType)
+			t.logf(depth, "- nullable struct %s.%s (%s)", typeOf.Name(), field.Name, nt.String())
+			typeScriptChunk, err := t.convertType(depth+1, nt, customCode)
+			if err != nil {
+				return "", err
+			}
+			if typeScriptChunk != "" {
+				result = typeScriptChunk + "\n" + result
+			}
+			builder.AddNullableStructField(jsonFieldName, field, nt)
 		} else if fldOpts.TSType != "" { // Struct:
 			t.logf(depth, "- simple field %s.%s", typeOf.Name(), field.Name)
 			err = builder.AddSimpleField(jsonFieldName, field, fldOpts)
@@ -783,6 +798,13 @@ func (t *typeScriptClassBuilder) AddEnumField(fieldName string, field reflect.St
 	t.addField(fieldName, t.prefix+fieldType+t.suffix)
 	strippedFieldName := strings.ReplaceAll(fieldName, "?", "")
 	t.addInitializerFieldLine(strippedFieldName, fmt.Sprintf("source[\"%s\"]", strippedFieldName))
+}
+
+func (t *typeScriptClassBuilder) AddNullableStructField(fieldName string, field reflect.StructField, nullableType reflect.Type) {
+	fieldType := nullableType.Name()
+	strippedFieldName := strings.ReplaceAll(fieldName, "?", "")
+	t.addField(fieldName, t.prefix+fieldType+t.suffix+" | null")
+	t.addInitializerFieldLine(strippedFieldName, fmt.Sprintf("this.convertValues(source[\"%s\"], %s)", strippedFieldName, t.prefix+fieldType+t.suffix))
 }
 
 func (t *typeScriptClassBuilder) AddStructField(fieldName string, field reflect.StructField) {
